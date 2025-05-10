@@ -6,10 +6,19 @@
 #include <string>
 #include <unistd.h>
 
-#define my_msleep(ms) std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+#define my_msleep(ms) std::this_thread::sleep_for(std::chrono::microseconds(static_cast<int64_t>(ms * 1000)));
 
-void init_hardware_pool();
-void submit_to_hardware(size_t hw_id, const std::string& node_name, int exec_time_ms);
+enum class HWType : uint8_t {
+  Sensor,
+  DSP0,
+  DSP1,
+  DSP2,
+  NPU,
+
+  NUM,
+};
+
+void submit_to_hardware(const std::string& hw_name, const std::string& node_name, double exec_time_ms);
 
 void tutorial_multi_pipeline();
 

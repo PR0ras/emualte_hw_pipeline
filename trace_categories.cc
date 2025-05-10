@@ -66,7 +66,7 @@ void InitializePerfetto() {
     // Note: To save memory with longer traces, you can tell Perfetto to write
     // directly into a file by passing a file descriptor into Setup() above.
     std::ofstream output;
-    output.open("~/code/DAG/emulate_graph/build/trace_file.pd", std::ios::out | std::ios::binary);
+    output.open("build/trace_file.pd", std::ios::out | std::ios::binary);
     output.write(trace_data.data(), std::streamsize(trace_data.size()));
     output.close();
     PERFETTO_LOG(
