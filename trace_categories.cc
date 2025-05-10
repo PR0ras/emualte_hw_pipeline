@@ -16,9 +16,16 @@
 
 #include "trace_categories.h"
 #include <fstream>
+#include <mutex>  // 添加头文件，用于 std::call_once 和 std::once_flag
 
 // Reserves internal static storage for our tracing categories.
 PERFETTO_TRACK_EVENT_STATIC_STORAGE();
+
+using std::call_once;
+// 声明 init_flag 变量
+namespace {
+std::once_flag init_flag;
+}
 
 void InitializePerfetto() {
     perfetto::TracingInitArgs args;
@@ -32,6 +39,7 @@ void InitializePerfetto() {
   }
 
   std::unique_ptr<perfetto::TracingSession> StartTracing() {
+    call_once(init_flag, InitializePerfetto);
     // The trace config defines which types of data sources are enabled for
     // recording. In this example we just need the "track_event" data source,
     // which corresponds to the TRACE_EVENT trace points.
@@ -58,10 +66,10 @@ void InitializePerfetto() {
     // Note: To save memory with longer traces, you can tell Perfetto to write
     // directly into a file by passing a file descriptor into Setup() above.
     std::ofstream output;
-    output.open("trace_file.pd", std::ios::out | std::ios::binary);
+    output.open("~/code/DAG/emulate_graph/build/trace_file.pd", std::ios::out | std::ios::binary);
     output.write(trace_data.data(), std::streamsize(trace_data.size()));
     output.close();
     PERFETTO_LOG(
-        "Trace written in example.pftrace file. To read this trace in "
-        "text form, run `./tools/traceconv text example.pftrace`");
+        "Trace written in trace_file.pd file. To read this trace in "
+        "text form, run `./tools/traceconv text trace_file.pd`");
   }
