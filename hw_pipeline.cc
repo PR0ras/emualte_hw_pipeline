@@ -4,9 +4,11 @@
 #include <string>
 #include <unistd.h>
 #include <utility>
+#include <perfetto.h>
 
-#include "trace_categories.h"
 #include "hw_pipeline.h"
+#include "taskflow_helper.h"
+#include "common_helper.h"
 
 const size_t num_lines = 128;
 
@@ -28,10 +30,10 @@ void make_liveview_process_taskflow(tf::Taskflow& taskflow)
 
 void make_coninue_capture_taskflow(tf::Taskflow& taskflow) {
 
-    auto still_process_executor = std::make_shared<tf::Executor>();
+    auto still_process_executor = create_executor();
     auto still_process_tf = std::make_shared<tf::Taskflow>();
 
-    auto liveview_process_executor = std::make_shared<tf::Executor>();
+    auto liveview_process_executor = create_executor();
     auto liveview_process_tf = std::make_shared<tf::Taskflow>();
 
     make_liveview_process_taskflow(*liveview_process_tf);
@@ -51,7 +53,7 @@ void make_coninue_capture_taskflow(tf::Taskflow& taskflow) {
             submit_to_hardware("Sensor", "Sensor", 10);
         }},
         tf::Pipe{tf::PipeType::PARALLEL, [taskflow=liveview_process_tf, executor=liveview_process_executor](tf::Pipeflow& pipeflow) {
-             executor->run(*taskflow).wait();
+             executor->run(*taskflow);
         }}
     );
 
@@ -107,4 +109,5 @@ void tutorial_multi_pipeline()
     task.precede(stop);
 
     executor.run(taskflow).wait();
+    wait_all_executors();
 }

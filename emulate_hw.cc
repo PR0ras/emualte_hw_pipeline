@@ -1,4 +1,7 @@
+#include "common_helper.h"
 #include "trace_categories.h"
+#include <perfetto.h>
+
 #include <iostream>
 #include <string>
 #include <thread>
@@ -12,12 +15,10 @@
 #include <vector>
 #include <atomic>
 #include <memory>
-
-#include "hw_pipeline.h"
+#include <future>
 
 using perfetto::DynamicString;
 using perfetto::NamedTrack;
-using perfetto::ThreadTrack;
 using std::function;
 using std::string;
 using std::queue;
