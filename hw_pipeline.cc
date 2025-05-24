@@ -26,7 +26,7 @@ void make_liveview_process_taskflow(tf::Taskflow& taskflow)
     );
 }
 
-void make_taskflow1(tf::Taskflow& taskflow) {
+void make_coninue_capture_taskflow(tf::Taskflow& taskflow) {
 
     auto still_process_executor = std::make_shared<tf::Executor>();
     auto still_process_tf = std::make_shared<tf::Taskflow>();
@@ -84,7 +84,7 @@ void tutorial_multi_pipeline()
 
     std::array<tf::Taskflow, num_pipes> taskflow_array;
 
-    make_taskflow1(taskflow_array[0]);
+    make_coninue_capture_taskflow(taskflow_array[0]);
 
     tf::Pipeline pipeline_obj(num_lines,
         tf::Pipe{tf::PipeType::SERIAL, [&](tf::Pipeflow& pipeflow) {

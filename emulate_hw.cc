@@ -15,7 +15,6 @@
 
 #include "hw_pipeline.h"
 
-
 using perfetto::DynamicString;
 using perfetto::NamedTrack;
 using perfetto::ThreadTrack;
@@ -35,14 +34,6 @@ using std::thread;
 using std::vector;
 using std::unique_lock;
 
-unordered_map<HWType, string> hw_type_name = {
-  {HWType::Sensor, "Sensor"},
-  {HWType::DSP0, "DSP0"},
-  {HWType::DSP1, "DSP1"},
-  {HWType::DSP2, "DSP2"},
-  {HWType::NPU, "NPU"},
-};
-
 // 硬件模拟器：每个硬件独占一个线程，支持任务排队
 class HardwareSimulator {
 public:
@@ -53,7 +44,7 @@ public:
         size_t task_id;
     };
 
-    HardwareSimulator(std::string  name)
+    HardwareSimulator(string  name)
         : name_(std::move(name)), stop_flag_(false), task_counter_(0){
 
         static int64_t pid = 10001;
@@ -67,7 +58,7 @@ public:
             track_desc_set = true;
         }
 
-        auto tid_ = static_cast<uint64_t>(std::hash<std::string>{}(name_));
+        auto tid_ = static_cast<uint64_t>(std::hash<string>{}(name_));
 
         thread_track_ = new perfetto::Track(tid_, hw_proc_track);
 
@@ -129,14 +120,13 @@ private:
                 tasks_.pop();
             }
 
-            // 记录硬件执行任务的开始，指定track为该硬件线程
             TRACE_EVENT_BEGIN("rendering", DynamicString(task_info.node_name), *thread_track_,
                              "node", task_info.node_name,
                              "hardware", name_,
                              "task_id", task_info.task_id);
 
-            // 执行任务
-            my_msleep(task_info.exec_time_ms);  // 模拟硬件执行时间
+
+            my_msleep(task_info.exec_time_ms);
             printf("[hardware %s] executing for node: %s (time: %f ms)\n",
                    name_.c_str(), task_info.node_name.c_str(), task_info.exec_time_ms);
 
@@ -161,7 +151,7 @@ private:
 
 unordered_map<string, unique_ptr<HardwareSimulator>> g_hardware_pool;
 
-void submit_to_hardware(const std::string& hw_name, const std::string& node_name, double exec_time_ms) {
+void submit_to_hardware(const string& hw_name, const string& node_name, double exec_time_ms) {
     // TRACE_EVENT("rendering", DynamicString(node_name),
     //              "node", node_name,
     //              "hardware", hw_name,
@@ -171,12 +161,10 @@ void submit_to_hardware(const std::string& hw_name, const std::string& node_name
                "hardware_name", hw_name,
                "execution_time", exec_time_ms);
 
-    // 如果硬件线程不存在则自动创建
     if (g_hardware_pool.find(hw_name) == g_hardware_pool.end()) {
         g_hardware_pool.emplace(hw_name, std::make_unique<HardwareSimulator>(hw_name));
     }
 
-    // 使用 shared_ptr 包装 promise，使 lambda 可复制
     auto done_promise = std::make_shared<promise<void>>();
     future<void> done_future = done_promise->get_future();
 
@@ -189,6 +177,6 @@ void submit_to_hardware(const std::string& hw_name, const std::string& node_name
         exec_time_ms
     );
 
-    done_future.wait(); // DAG节点同步等待硬件任务完成
+    done_future.wait();
     TRACE_EVENT_END("rendering", NamedTrack(DynamicString(node_name)));
 }
