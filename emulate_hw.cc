@@ -1,4 +1,5 @@
 #include "trace_categories.h"
+#include <iostream>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -92,21 +93,23 @@ private:
     }
 
     void thread_func() {
-        // 全局模拟进程track（pid=10001，可自定义）
-        static auto hw_proc_track = perfetto::ProcessTrack::Global(100001);
+        static int64_t pid = 10001;
+        static auto hw_proc_track = perfetto::ProcessTrack::Global(pid);
         static bool track_desc_set = false;
         if (!track_desc_set) {
             auto proc_desc = hw_proc_track.Serialize();
             proc_desc.mutable_process()->set_process_name("HardwareSimProcess");
+            proc_desc.mutable_process()->set_pid(pid);
             perfetto::TrackEvent::SetTrackDescriptor(hw_proc_track, proc_desc);
             track_desc_set = true;
         }
-        // 每个硬件线程唯一tid（用hash(name_)），track name为硬件名，归属模拟进程
+
         auto tid = static_cast<uint64_t>(std::hash<std::string>{}(name_));
-        auto thread_track = perfetto::ThreadTrack::Global(tid);
+        auto thread_track =  perfetto::Track(tid, hw_proc_track);
         auto desc = thread_track.Serialize();
         desc.mutable_thread()->set_thread_name(name_);
-        desc.set_parent_uuid(hw_proc_track.uuid); // 归属模拟进程
+        desc.mutable_thread()->set_tid(tid);
+        desc.mutable_thread()->set_pid(pid);
         perfetto::TrackEvent::SetTrackDescriptor(thread_track, desc);
 
         while (true) {

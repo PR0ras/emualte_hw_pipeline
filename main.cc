@@ -11,12 +11,6 @@
 int main() {
   auto tracing_session = StartTracing();
 
-  // Give a custom name for the traced process.
-  perfetto::ProcessTrack process_track = perfetto::ProcessTrack::Current();
-  perfetto::protos::gen::TrackDescriptor desc = process_track.Serialize();
-  desc.mutable_process()->set_process_name("Example");
-  perfetto::TrackEvent::SetTrackDescriptor(process_track, desc);
-
   tutorial_multi_pipeline();
 
   StopTracing(std::move(tracing_session));
