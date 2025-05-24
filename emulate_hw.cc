@@ -54,7 +54,29 @@ public:
     };
 
     HardwareSimulator(std::string  name)
-        : name_(std::move(name)), stop_flag_(false), task_counter_(0) {
+        : name_(std::move(name)), stop_flag_(false), task_counter_(0){
+
+        static int64_t pid = 10001;
+        static auto hw_proc_track = perfetto::ProcessTrack::Global(pid);
+        static bool track_desc_set = false;
+        if (!track_desc_set) {
+            auto proc_desc = hw_proc_track.Serialize();
+            proc_desc.mutable_process()->set_process_name("Hardware Simulator");
+            proc_desc.mutable_process()->set_pid(pid);
+            perfetto::TrackEvent::SetTrackDescriptor(hw_proc_track, proc_desc);
+            track_desc_set = true;
+        }
+
+        auto tid_ = static_cast<uint64_t>(std::hash<std::string>{}(name_));
+
+        thread_track_ = new perfetto::Track(tid_, hw_proc_track);
+
+        auto desc = thread_track_->Serialize();
+        desc.mutable_thread()->set_thread_name(name_);
+        desc.mutable_thread()->set_tid(tid_);
+        desc.mutable_thread()->set_pid(pid);
+        perfetto::TrackEvent::SetTrackDescriptor(*thread_track_, desc);
+
         worker_ = std::thread([this]() { this->thread_func(); });
     }
 
@@ -62,6 +84,8 @@ public:
         {
             lock_guard<mutex> lock(mtx_);
             stop_flag_ = true;
+            delete thread_track_;
+            thread_track_ = nullptr;
         }
         cv_.notify_all();
         if (worker_.joinable()) {
@@ -93,25 +117,6 @@ private:
     }
 
     void thread_func() {
-        static int64_t pid = 10001;
-        static auto hw_proc_track = perfetto::ProcessTrack::Global(pid);
-        static bool track_desc_set = false;
-        if (!track_desc_set) {
-            auto proc_desc = hw_proc_track.Serialize();
-            proc_desc.mutable_process()->set_process_name("HardwareSimProcess");
-            proc_desc.mutable_process()->set_pid(pid);
-            perfetto::TrackEvent::SetTrackDescriptor(hw_proc_track, proc_desc);
-            track_desc_set = true;
-        }
-
-        auto tid = static_cast<uint64_t>(std::hash<std::string>{}(name_));
-        auto thread_track =  perfetto::Track(tid, hw_proc_track);
-        auto desc = thread_track.Serialize();
-        desc.mutable_thread()->set_thread_name(name_);
-        desc.mutable_thread()->set_tid(tid);
-        desc.mutable_thread()->set_pid(pid);
-        perfetto::TrackEvent::SetTrackDescriptor(thread_track, desc);
-
         while (true) {
             TaskInfo task_info;
             {
@@ -125,7 +130,7 @@ private:
             }
 
             // 记录硬件执行任务的开始，指定track为该硬件线程
-            TRACE_EVENT_BEGIN("rendering", DynamicString(task_info.node_name), thread_track,
+            TRACE_EVENT_BEGIN("rendering", DynamicString(task_info.node_name), *thread_track_,
                              "node", task_info.node_name,
                              "hardware", name_,
                              "task_id", task_info.task_id);
@@ -139,7 +144,7 @@ private:
             task_info.task();
 
             // 记录硬件执行任务的结束
-            TRACE_EVENT_END("rendering", thread_track);
+            TRACE_EVENT_END("rendering", *thread_track_);
         }
     }
 
@@ -150,12 +155,12 @@ private:
     thread worker_;
     bool stop_flag_;
     atomic<size_t> task_counter_;
+
+    perfetto::Track *thread_track_;
 };
 
-// 全局硬件池，key为string
 unordered_map<string, unique_ptr<HardwareSimulator>> g_hardware_pool;
 
-// DAG节点异步请求硬件，并等待任务完成
 void submit_to_hardware(const std::string& hw_name, const std::string& node_name, double exec_time_ms) {
     // TRACE_EVENT("rendering", DynamicString(node_name),
     //              "node", node_name,

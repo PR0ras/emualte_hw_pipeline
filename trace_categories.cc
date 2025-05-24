@@ -40,7 +40,7 @@ void InitializePerfetto() {
     // Give a custom name for the traced process.
     perfetto::ProcessTrack process_track = perfetto::ProcessTrack::Current();
     perfetto::protos::gen::TrackDescriptor desc = process_track.Serialize();
-    desc.mutable_process()->set_process_name("Example");
+    desc.mutable_process()->set_process_name("PipeLine Simulator");
     perfetto::TrackEvent::SetTrackDescriptor(process_track, desc);
   }
 
