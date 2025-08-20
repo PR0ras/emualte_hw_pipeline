@@ -6,7 +6,7 @@
 #include <string>
 #include <unistd.h>
 
-void submit_to_hardware(const std::string& hw_name, const std::string& node_name, double exec_time_ms);
+void submit_to_hardware(const std::vector<std::string>& hw_names, const std::string& node_name, double exec_time_ms);
 void tutorial_multi_pipeline();
 
 #endif // __HW_PIPELINE_H__

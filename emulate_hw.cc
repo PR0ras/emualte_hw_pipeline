@@ -43,11 +43,11 @@ public:
         string node_name;
         double exec_time_ms;
         size_t task_id;
+        shared_ptr<promise<void>> ready_promise;  // 准备就绪信号
+        shared_ptr<future<void>> start_signal;    // 开始执行信号
     };
 
-    HardwareSimulator(string  name)
-        : name_(std::move(name)), stop_flag_(false), task_counter_(0){
-
+    static perfetto::Track& HardwareSimulatorTrack() {
         static int64_t pid = 10001;
         static auto hw_proc_track = perfetto::ProcessTrack::Global(pid);
         static bool track_desc_set = false;
@@ -58,15 +58,21 @@ public:
             perfetto::TrackEvent::SetTrackDescriptor(hw_proc_track, proc_desc);
             track_desc_set = true;
         }
+        return hw_proc_track;
+    }
+
+    HardwareSimulator(string  name)
+        : name_(std::move(name)), stop_flag_(false), task_counter_(0){
 
         auto tid_ = static_cast<uint64_t>(std::hash<string>{}(name_));
 
-        thread_track_ = new perfetto::Track(tid_, hw_proc_track);
+        thread_track_ = new perfetto::Track(tid_, HardwareSimulatorTrack());
 
+        auto proc_desc = HardwareSimulatorTrack().Serialize();
         auto desc = thread_track_->Serialize();
         desc.mutable_thread()->set_thread_name(name_);
         desc.mutable_thread()->set_tid(tid_);
-        desc.mutable_thread()->set_pid(pid);
+        desc.mutable_thread()->set_pid(proc_desc.process().pid());
         perfetto::TrackEvent::SetTrackDescriptor(*thread_track_, desc);
 
         worker_ = std::thread([this]() { this->thread_func(); });
@@ -88,14 +94,22 @@ public:
     // 投递任务到硬件队列
     void submit(function<void()> task, const string& node_name, double exec_time_ms) {
         size_t task_id = next_task_id();
-        // TRACE_EVENT_INSTANT("rendering", "Hardware_Submit",
-        //                    "hardware", name_,
-        //                    "node", node_name,
-        //                    "task_id", task_id);
 
         {
             lock_guard<mutex> lock(mtx_);
-            tasks_.push({std::move(task), node_name, exec_time_ms, task_id});
+            tasks_.push({std::move(task), node_name, exec_time_ms, task_id, nullptr, nullptr});
+        }
+        cv_.notify_one();
+    }
+
+    // 投递需要同步的任务
+    void submit_sync(function<void()> task, const string& node_name, double exec_time_ms,
+                    shared_ptr<promise<void>> ready_promise, shared_ptr<future<void>> start_signal) {
+        size_t task_id = next_task_id();
+
+        {
+            lock_guard<mutex> lock(mtx_);
+            tasks_.push({std::move(task), node_name, exec_time_ms, task_id, ready_promise, start_signal});
         }
         cv_.notify_one();
     }
@@ -119,6 +133,12 @@ private:
 
                 task_info = std::move(tasks_.front());
                 tasks_.pop();
+            }
+
+            // 如果是同步任务，先通知准备就绪，然后等待开始信号
+            if (task_info.ready_promise && task_info.start_signal) {
+                task_info.ready_promise->set_value();  // 通知已准备就绪
+                task_info.start_signal->wait();        // 等待开始信号
             }
 
             TRACE_EVENT_BEGIN("rendering", DynamicString(task_info.node_name), *thread_track_,
@@ -152,32 +172,74 @@ private:
 
 unordered_map<string, unique_ptr<HardwareSimulator>> g_hardware_pool;
 
-void submit_to_hardware(const string& hw_name, const string& node_name, double exec_time_ms) {
-    // TRACE_EVENT("rendering", DynamicString(node_name),
-    //              "node", node_name,
-    //              "hardware", hw_name,
-    //              "execution_time", exec_time_ms);
+void submit_to_hardware(const vector<string>& hw_names, const string& node_name, double exec_time_ms) {
     TRACE_EVENT_BEGIN("rendering", DynamicString(node_name), NamedTrack(DynamicString(node_name)),
                "node", node_name,
-               "hardware_name", hw_name,
+               "hardware_count", hw_names.size(),
                "execution_time", exec_time_ms);
 
-    if (g_hardware_pool.find(hw_name) == g_hardware_pool.end()) {
-        g_hardware_pool.emplace(hw_name, std::make_unique<HardwareSimulator>(hw_name));
+    vector<future<void>> futures;
+
+    if (hw_names.size() == 1) {
+        // 单硬件情况，直接执行
+        const auto& hw_name = hw_names[0];
+        if (g_hardware_pool.find(hw_name) == g_hardware_pool.end()) {
+            g_hardware_pool.emplace(hw_name, std::make_unique<HardwareSimulator>(hw_name));
+        }
+
+        auto done_promise = std::make_shared<promise<void>>();
+        futures.push_back(done_promise->get_future());
+
+        g_hardware_pool[hw_name]->submit(
+            [promise_ptr = done_promise, node_name]() {
+                promise_ptr->set_value();
+            },
+            node_name,
+            exec_time_ms
+        );
+    } else {
+        // 多硬件情况，需要同步执行
+        vector<shared_ptr<promise<void>>> ready_promises;
+        vector<shared_ptr<future<void>>> ready_futures;
+        auto start_promise = std::make_shared<promise<void>>();
+        auto start_future = std::make_shared<future<void>>(start_promise->get_future());
+
+        for (const auto& hw_name : hw_names) {
+            if (g_hardware_pool.find(hw_name) == g_hardware_pool.end()) {
+                g_hardware_pool.emplace(hw_name, std::make_unique<HardwareSimulator>(hw_name));
+            }
+
+            auto done_promise = std::make_shared<promise<void>>();
+            futures.push_back(done_promise->get_future());
+
+            auto ready_promise = std::make_shared<promise<void>>();
+            ready_promises.push_back(ready_promise);
+            ready_futures.push_back(std::make_shared<future<void>>(ready_promise->get_future()));
+
+            g_hardware_pool[hw_name]->submit_sync(
+                [promise_ptr = done_promise, node_name]() {
+                    promise_ptr->set_value();
+                },
+                node_name,
+                exec_time_ms,
+                ready_promise,
+                start_future
+            );
+        }
+
+        // 等待所有硬件准备就绪
+        for (auto& ready_future : ready_futures) {
+            ready_future->wait();
+        }
+
+        // 所有硬件准备就绪后，发送开始信号
+        start_promise->set_value();
     }
 
-    auto done_promise = std::make_shared<promise<void>>();
-    future<void> done_future = done_promise->get_future();
+    // 等待所有硬件任务完成
+    for (auto& future : futures) {
+        future.wait();
+    }
 
-    g_hardware_pool[hw_name]->submit(
-        [promise_ptr = done_promise, node_name]() {
-            // 当硬件任务完成时，设置 promise 的值
-            promise_ptr->set_value();
-        },
-        node_name,
-        exec_time_ms
-    );
-
-    done_future.wait();
     TRACE_EVENT_END("rendering", NamedTrack(DynamicString(node_name)));
 }

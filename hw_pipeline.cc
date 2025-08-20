@@ -15,22 +15,22 @@ const size_t num_lines = 128;
 void make_still_process_taskflow(tf::Taskflow& taskflow)
 {
     auto taskA = taskflow.emplace(
-        [](){ submit_to_hardware("NPU0", "post process1", 20); },
-        [](){ submit_to_hardware("DSP0", "post process2", 50); }
+        [](){ submit_to_hardware({"NPU0"}, "post process1", 40); },
+        [](){ submit_to_hardware({"NPU0"}, "post process3", 100); },
+        [](){ submit_to_hardware({"DSP0","NPU0"}, "post process2", 50); }
     );
 }
 
 void make_liveview_process_taskflow(tf::Taskflow& taskflow)
 {
     auto taskA = taskflow.emplace(
-        [](){ submit_to_hardware("NPU1", "ROI", 1); },
-        [](){ submit_to_hardware("ISP0", "HWPD", 3); }
+        [](){ submit_to_hardware({"NPU1"}, "ROI", 1); },
+        [](){ submit_to_hardware({"ISP0"}, "HWPD", 3); }
     );
 }
 
 auto make_liveview_pipeline()
 {
-    auto liveview_process_executor = create_executor();
     auto liveview_process_tf = create_taskflow();
 
     make_liveview_process_taskflow(*liveview_process_tf);
@@ -44,10 +44,10 @@ auto make_liveview_pipeline()
                 my_msleep(10);
                 return;
             }
-            submit_to_hardware("Sensor", "Liveview", 10);
+            submit_to_hardware({"Sensor"}, "Liveview", 10);
         }},
-        tf::Pipe{tf::PipeType::PARALLEL, [taskflow=liveview_process_tf, executor=liveview_process_executor](tf::Pipeflow& pipeflow) {
-             executor->run(*taskflow);
+        tf::Pipe{tf::PipeType::PARALLEL, [taskflow=liveview_process_tf](tf::Pipeflow& pipeflow, tf::Runtime& rt) {
+             rt.corun(*taskflow);
         }}
     );
 
@@ -56,7 +56,6 @@ auto make_liveview_pipeline()
 
 void make_coninue_capture_taskflow(tf::Taskflow& main_taskflow) {
 
-    auto still_process_executor = create_executor();
     auto still_process_tf = create_taskflow();
 
     make_still_process_taskflow(*still_process_tf);
@@ -64,8 +63,8 @@ void make_coninue_capture_taskflow(tf::Taskflow& main_taskflow) {
     auto liveview_pipeline = make_liveview_pipeline();
 
     auto [still_frame_task, still_process_task] = main_taskflow.emplace(
-        [liveview_pipeline](){ submit_to_hardware("Sensor", "Sensor", 110); liveview_pipeline->reset(); },
-        [taskflow=still_process_tf, executor=still_process_executor](){ executor->run(*taskflow); }
+        [liveview_pipeline](){ submit_to_hardware({"Sensor"}, "Sensor", 110); liveview_pipeline->reset(); },
+        [taskflow=still_process_tf](tf::Runtime& rt){ rt.corun(*taskflow); }
     );
     still_frame_task.name("still_frame");
     still_process_task.name("still_process");
